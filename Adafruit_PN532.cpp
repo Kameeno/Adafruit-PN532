@@ -52,7 +52,7 @@
 #if defined(__AVR__) || defined(__i386__) || defined(ARDUINO_ARCH_SAMD) || defined(ESP8266) || defined(ARDUINO_ARCH_STM32)
 #define WIRE Wire
 #else // Arduino Due
-#define WIRE Wire1
+#define WIRE Wire
 #endif
 
 #include <SPI.h>
@@ -67,8 +67,15 @@ byte pn532response_firmwarevers[] = {0x00, 0xFF, 0x06, 0xFA, 0xD5, 0x03};
 // #define MIFAREDEBUG
 
 // If using Native Port on Arduino Zero or Due define as SerialUSB
+
+#if defined(ARDUINO_ARCH_SAMD)
+// for Zero, output on USB Serial console, remove line below if using programming port to program the Zero!
+// also change #define in Adafruit_PN532.cpp library file
+#define PN532DEBUGPRINT SerialUSB
+#else
 #define PN532DEBUGPRINT Serial
-//#define PN532DEBUGPRINT SerialUSB
+
+#endif
 
 // Hardware SPI-specific configuration:
 #ifdef SPI_HAS_TRANSACTION
@@ -148,17 +155,24 @@ Adafruit_PN532::Adafruit_PN532(uint8_t clk, uint8_t miso, uint8_t mosi, uint8_t 
     @param  reset     Location of the RSTPD_N pin
 */
 /**************************************************************************/
-Adafruit_PN532::Adafruit_PN532(uint8_t irq, uint8_t reset) : _clk(0),
-                                                             _miso(0),
-                                                             _mosi(0),
-                                                             _ss(0),
-                                                             _irq(irq),
-                                                             _reset(reset),
-                                                             _usingSPI(false),
-                                                             _hardwareSPI(false)
+Adafruit_PN532::Adafruit_PN532(uint8_t irq, uint8_t reset, bool _notusingirq) : _clk(0),
+                                                                                _miso(0),
+                                                                                _mosi(0),
+                                                                                _ss(0),
+                                                                                _irq(irq),
+                                                                                _reset(reset),
+                                                                                _usingSPI(false),
+                                                                                _hardwareSPI(false),
+                                                                                notusingirq(notusingirq)
 {
-  pinMode(_irq, INPUT);
-  pinMode(_reset, OUTPUT);
+  _usingSPI = 0;
+  notusingirq = _notusingirq;
+  if (!_notusingirq)
+  {
+    /* code */
+    pinMode(_irq, INPUT);
+    pinMode(_reset, OUTPUT);
+  }
 }
 
 /**************************************************************************/
@@ -225,12 +239,17 @@ void Adafruit_PN532::begin()
     WIRE.begin();
 
     // Reset the PN532
-    digitalWrite(_reset, HIGH);
-    digitalWrite(_reset, LOW);
-    delay(400);
-    digitalWrite(_reset, HIGH);
-    delay(10); // Small delay required before taking other actions after reset.
-               // See timing diagram on page 209 of the datasheet, section 12.23.
+    if (!notusingirq)
+    {
+      /* code */
+
+      digitalWrite(_reset, HIGH);
+      digitalWrite(_reset, LOW);
+      delay(400);
+      digitalWrite(_reset, HIGH);
+      delay(10); // Small delay required before taking other actions after reset.
+                 // See timing diagram on page 209 of the datasheet, section 12.23.
+    }
   }
 }
 
@@ -582,6 +601,12 @@ bool Adafruit_PN532::setPassiveActivationRetries(uint8_t maxRetries)
 /**************************************************************************/
 bool Adafruit_PN532::readPassiveTargetID(uint8_t cardbaudrate, uint8_t *uid, uint8_t *uidLength, uint16_t timeout)
 {
+
+  if (this->notusingirq)
+  {
+    this->SAMConfig();
+  }
+
   pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
   pn532_packetbuffer[1] = 1; // max 1 cards at once (we can set this to 2 later)
   pn532_packetbuffer[2] = cardbaudrate;
@@ -1599,8 +1624,16 @@ bool Adafruit_PN532::isready()
   else
   {
     // I2C check if status is ready by IRQ line being pulled low.
-    uint8_t x = digitalRead(_irq);
-    return x == 0;
+    if (!notusingirq)
+    {
+      uint8_t x = digitalRead(_irq);
+      return x == 0;
+    }
+    else
+    {
+      delay(10);
+      return PN532_SPI_READY;
+    }
   }
 }
 
@@ -1627,7 +1660,7 @@ bool Adafruit_PN532::waitready(uint16_t timeout)
         return false;
       }
     }
-    delay(10);
+    delay(50);
   }
   return true;
 }
